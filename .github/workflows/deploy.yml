@@ -9,9 +9,6 @@ jobs:
   deploy:
     runs-on: self-hosted
     steps:
-      - name: Checkout harvestwind-backup
-        uses: actions/checkout@v4
-
       - name: Resolve platform repo
         id: platform
         run: |
@@ -28,9 +25,7 @@ jobs:
 
       - name: Run Ansible deploy
         working-directory: ${{ steps.platform.outputs.dir }}
-        env:
-          BACKUP_REPO_PATH: ${{ github.workspace }}
         run: |
           ansible-playbook playbooks/deploy_backup.yml \
             -i inventory/hosts.yml \
-            -e "backup_repo_path=${BACKUP_REPO_PATH}"
+            -e "backup_git_ref=${{ github.sha }}"
