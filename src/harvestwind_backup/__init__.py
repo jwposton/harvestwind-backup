@@ -1,3 +1,9 @@
 """HarvestWind backup: Docker client and Borg/cloud server."""
 
-__version__ = "0.1.1"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("harvestwind-backup")
+except PackageNotFoundError:
+    # Editable checkout without install (e.g. raw PYTHONPATH)
+    __version__ = "0.0.0+dev"
