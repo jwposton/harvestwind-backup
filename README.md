@@ -86,9 +86,9 @@ pip install "git+https://github.com/jwposton/harvestwind-backup.git@main"
 
 Configure `backup_git_repo` in platform, add hosts to `backup_clients` / `backup_servers`, define configs in host_vars.
 
-**Automatic:** push to `main` → workflow in this repo can trigger `platform/playbooks/deploy_backup.yml`.
+**GitHub Actions:** run the **Deploy Backup Agent** workflow manually (`workflow_dispatch`) on a self-hosted runner with the platform repo available.
 
-**Manual:**
+**Manual (local):**
 
 ```bash
 cd platform
