@@ -82,8 +82,7 @@ class ServerRunner:
                     tags=["backup", "server"],
                 )
 
-        cloud_ok, cloud_stats = self.cloud.sync(self.config.borg.backup_path)
-        self.cloud_ok = cloud_ok
+        cloud_ok, cloud_stats = self.cloud.sync(self.config.borg.repo_path)
         self.bytes_synced = cloud_stats.bytes_transferred
         if not cloud_ok:
             had_errors = True
@@ -93,6 +92,16 @@ class ServerRunner:
                 "rclone sync returned an error. Check server logs.",
                 tags=["backup", "server"],
             )
+        elif not self.cloud.verify(self.config.borg.repo_path)[0]:
+            cloud_ok = False
+            had_errors = True
+            self.notifier.notify_if(
+                "failure",
+                "Cloud sync verification failed",
+                "rclone check returned an error. Check server logs.",
+                tags=["backup", "server"],
+            )
+        self.cloud_ok = cloud_ok
 
         wall = time.monotonic() - self._started
         kind = "failure" if had_errors else "success"

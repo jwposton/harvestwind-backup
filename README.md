@@ -2,6 +2,12 @@
 
 Docker volume + rsync **client**, and Borg + rclone **server**, with ntfy notifications and correct transfer metrics.
 
+## Backup pipeline (server)
+
+1. **Client** — rsync app trees to `borg.backup_path` on the backup server (e.g. `/srv/backups/nixihost/rsync`).
+2. **Server** — `borg create` archives that tree into `borg.repo_path` (local versioned repo).
+3. **Server** — `rclone sync` then `rclone check --one-way` on `borg.repo_path` → B2 (legacy parity: mirror + verify, retries with backoff).
+
 Deployed by the **platform** Ansible role `harvestwind_backup` (configs and secrets live in that repo, not here).
 
 ## Host assignment

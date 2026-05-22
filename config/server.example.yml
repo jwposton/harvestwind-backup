@@ -3,8 +3,8 @@ backup:
     lock_timeout: 300
 
   borg:
-    repo_path: /srv/backups/borg_repo
-    backup_path: /srv/backups/rsync
+    repo_path: /srv/backups/borg_repo   # borg create target; rclone sync source
+    backup_path: /srv/backups/rsync       # client rsync staging; borg create source
     compression: lz4
     full_check: false
     cache_dir: /var/cache/borg

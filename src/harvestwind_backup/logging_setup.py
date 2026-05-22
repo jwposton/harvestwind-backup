@@ -18,16 +18,19 @@ def setup_logging(name: str, log_dir: Path, *, level: int = logging.INFO) -> log
     root = logging.getLogger()
     if not root.handlers:
         root.setLevel(level)
-        file_handler = RotatingFileHandler(
-            log_file,
-            maxBytes=10 * 1024 * 1024,
-            backupCount=5,
-            encoding="utf-8",
-        )
-        file_handler.setFormatter(formatter)
         console = logging.StreamHandler()
         console.setFormatter(formatter)
-        root.addHandler(file_handler)
         root.addHandler(console)
+        try:
+            file_handler = RotatingFileHandler(
+                log_file,
+                maxBytes=10 * 1024 * 1024,
+                backupCount=5,
+                encoding="utf-8",
+            )
+            file_handler.setFormatter(formatter)
+            root.addHandler(file_handler)
+        except OSError:
+            root.warning("File logging disabled (cannot write to %s)", log_file)
 
     return logging.getLogger(name)
