@@ -8,6 +8,12 @@ backup:
     compression: lz4
     full_check: false
     cache_dir: /var/cache/borg
+    prune: true
+    retention:
+      daily: 7
+      weekly: 4
+      monthly: 6
+    # retention: false   # disable prune
 
   b2:
     bucket: your-bucket

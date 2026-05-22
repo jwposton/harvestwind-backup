@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .config import BorgRetention
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,6 +24,12 @@ class BorgArchiveStats:
     size_deduplicated: int
     num_files: int
     duration: float
+
+
+@dataclass
+class BorgPruneStats:
+    archives_deleted: int = 0
+    duration: float = 0.0
 
 
 class BorgManager:
@@ -64,6 +72,44 @@ class BorgManager:
             return False, None
 
         stats = self._parse_stats(result.stderr + result.stdout, archive_name, duration)
+        return True, stats
+
+    def prune_argv(self, retention: BorgRetention, lock_timeout: int = 300) -> list[str]:
+        cmd = ["borg", "prune", f"--lock-wait={lock_timeout}", "--stats"]
+        for flag, count in (
+            ("--keep-daily", retention.daily),
+            ("--keep-weekly", retention.weekly),
+            ("--keep-monthly", retention.monthly),
+            ("--keep-yearly", retention.yearly),
+        ):
+            if count > 0:
+                cmd.append(f"{flag}={count}")
+        cmd.append(str(self.repo_path))
+        return cmd
+
+    def prune_repository(
+        self, retention: BorgRetention, lock_timeout: int = 300
+    ) -> tuple[bool, BorgPruneStats | None]:
+        cmd = self.prune_argv(retention, lock_timeout)
+        start = datetime.now()
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        duration = (datetime.now() - start).total_seconds()
+        combined = (result.stdout or "") + (result.stderr or "")
+
+        if result.returncode != 0:
+            logger.error("borg prune failed: %s", result.stderr)
+            return False, None
+
+        pruning = re.findall(r"Pruning archive\b", combined, flags=re.IGNORECASE)
+        stats = BorgPruneStats(
+            archives_deleted=len(pruning),
+            duration=duration,
+        )
+        logger.info(
+            "borg prune finished in %.1fs (%d archive(s) pruned)",
+            duration,
+            stats.archives_deleted,
+        )
         return True, stats
 
     def _parse_stats(

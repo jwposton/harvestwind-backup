@@ -22,8 +22,10 @@ class ServerRunner:
     config: ServerConfig
     _started: float = field(default_factory=time.monotonic)
     borg_ok: bool = False
+    prune_ok: bool = True
     cloud_ok: bool = False
     archive_name: str | None = None
+    archives_pruned: int = 0
     bytes_synced: int = 0
 
     def __post_init__(self) -> None:
@@ -63,6 +65,22 @@ class ServerRunner:
                 "borg create returned an error. Check server logs.",
                 tags=["backup", "server"],
             )
+        elif self.config.borg.retention is not None:
+            prune_ok, prune_stats = self.borg.prune_repository(
+                self.config.borg.retention,
+                lock_timeout=self.config.lock_timeout,
+            )
+            self.prune_ok = prune_ok
+            if prune_stats:
+                self.archives_pruned = prune_stats.archives_deleted
+            if not prune_ok:
+                had_errors = True
+                self.notifier.notify_if(
+                    "failure",
+                    "Borg prune failed",
+                    "borg prune returned an error. Check server logs.",
+                    tags=["backup", "server"],
+                )
 
         cloud_ok, cloud_stats = self.cloud.sync(self.config.borg.backup_path)
         self.cloud_ok = cloud_ok
@@ -90,8 +108,13 @@ class ServerRunner:
         lines = [
             f"**Duration:** {format_duration(wall)}",
             f"**Borg:** {'OK' if self.borg_ok else 'FAILED'}",
-            f"**Cloud:** {'OK' if self.cloud_ok else 'FAILED'}",
         ]
+        if self.config.borg.retention is not None:
+            prune_line = "OK" if self.prune_ok else "FAILED"
+            if self.archives_pruned:
+                prune_line += f" ({self.archives_pruned} archive(s) pruned)"
+            lines.append(f"**Prune:** {prune_line}")
+        lines.append(f"**Cloud:** {'OK' if self.cloud_ok else 'FAILED'}")
         if archive:
             lines.extend(
                 [

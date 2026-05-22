@@ -40,12 +40,35 @@ class ClientConfig:
 
 
 @dataclass
+class BorgRetention:
+    """GFS-style keep rules passed to ``borg prune`` (0 = omit that tier)."""
+
+    daily: int = 7
+    weekly: int = 4
+    monthly: int = 6
+    yearly: int = 0
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "BorgRetention":
+        if not isinstance(data, dict):
+            return cls()
+        return cls(
+            daily=int(data.get("daily", 7)),
+            weekly=int(data.get("weekly", 4)),
+            monthly=int(data.get("monthly", 6)),
+            yearly=int(data.get("yearly", 0)),
+        )
+
+
+@dataclass
 class BorgConfig:
     repo_path: str
     backup_path: str
     compression: str
     full_check: bool = False
     cache_dir: str | None = None
+    prune: bool = True
+    retention: BorgRetention | None = field(default_factory=BorgRetention)
 
 
 @dataclass
@@ -68,6 +91,14 @@ class ServerConfig:
         backup = data["backup"]
         server = backup.get("server", {})
         borg = backup["borg"]
+        prune = bool(borg.get("prune", True))
+        retention_raw = borg.get("retention")
+        if retention_raw is False or not prune:
+            retention = None
+        elif retention_raw is None:
+            retention = BorgRetention()
+        else:
+            retention = BorgRetention.from_dict(retention_raw)
         return cls(
             borg=BorgConfig(
                 repo_path=borg["repo_path"],
@@ -75,6 +106,8 @@ class ServerConfig:
                 compression=borg.get("compression", "lz4"),
                 full_check=bool(borg.get("full_check", False)),
                 cache_dir=borg.get("cache_dir"),
+                prune=prune,
+                retention=retention,
             ),
             b2=B2Config(**backup["b2"]),
             ntfy=NtfyConfig.from_dict(backup.get("ntfy")),

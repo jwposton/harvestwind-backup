@@ -101,6 +101,10 @@ ansible-playbook playbooks/deploy_backup.yml -i inventory/hosts.yml
 - `unifybackup.volumes.exclude: "true"`
 - `unifybackup.app.exclude: "true"`
 
+## Borg retention
+
+After each successful `borg create`, the server runs `borg prune` with GFS-style keep rules (default: 7 daily, 4 weekly, 6 monthly). Configure under `borg.retention` in server config; set `borg.prune: false` or `borg.retention: false` to disable.
+
 ## Metrics fixes (vs legacy)
 
 - Parses rsync `--stats` from stdout **and** stderr
