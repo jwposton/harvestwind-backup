@@ -1,0 +1,37 @@
+backup:
+  apps_root: /home/jwp/docker-services
+
+  volumes:
+    max_backups: 5
+    backup_dir: vol_bkup
+    uid: 1000
+    gid: 1000
+
+  rsync:
+    server_destination:
+      type: ssh
+      host: backup.example.com
+      user: backup
+      port: 22
+      remote_path: /srv/backups/rsync
+      auth:
+        key_path: /etc/harvestwind-backup/ssh/backup_key
+      options:
+        delete: true
+        compress: false
+        whole_file: true
+        exclude:
+          - ".git/"
+          - "*.tmp"
+
+    additional_destinations: []
+
+  ntfy:
+    enabled: true
+    url: https://ntfy.harvestwind.org
+    topic: backups
+    # token: set via /etc/harvestwind-backup/environment (NTFY_TOKEN)
+    notify_on:
+      success: true
+      failure: true
+      warning: true

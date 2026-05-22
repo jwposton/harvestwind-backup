@@ -1,0 +1,23 @@
+backup:
+  server:
+    lock_timeout: 300
+
+  borg:
+    repo_path: /srv/backups/borg_repo
+    backup_path: /srv/backups/rsync
+    compression: lz4
+    full_check: false
+    cache_dir: /var/cache/borg
+
+  b2:
+    bucket: your-bucket
+    path: backups
+
+  ntfy:
+    enabled: true
+    url: https://ntfy.harvestwind.org
+    topic: backups
+    notify_on:
+      success: true
+      failure: true
+      warning: true
