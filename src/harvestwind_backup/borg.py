@@ -74,6 +74,56 @@ class BorgManager:
         stats = self._parse_stats(result.stderr + result.stdout, archive_name, duration)
         return True, stats
 
+    def list_archives(self) -> list[str]:
+        result = subprocess.run(
+            [
+                "borg",
+                "list",
+                "--format",
+                "{name}{NL}",
+                str(self.repo_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            logger.error("borg list failed: %s", result.stderr)
+            return []
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+    def verify_repository(
+        self,
+        *,
+        full_check: bool = False,
+        archive_name: str | None = None,
+        lock_timeout: int = 300,
+    ) -> bool:
+        if full_check:
+            cmd = ["borg", "check", f"--lock-wait={lock_timeout}", str(self.repo_path)]
+            label = "full repository"
+        else:
+            name = archive_name
+            if not name:
+                archives = self.list_archives()
+                if not archives:
+                    logger.error("borg verify: no archives in repository")
+                    return False
+                name = archives[-1]
+            cmd = [
+                "borg",
+                "check",
+                f"--lock-wait={lock_timeout}",
+                f"{self.repo_path}::{name}",
+            ]
+            label = f"archive {name}"
+        logger.info("borg check starting (%s)", label)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.error("borg check failed (%s): %s", label, result.stderr)
+            return False
+        logger.info("borg check passed (%s)", label)
+        return True
+
     def prune_argv(self, retention: BorgRetention, lock_timeout: int = 300) -> list[str]:
         cmd = ["borg", "prune", f"--lock-wait={lock_timeout}", "--stats"]
         for flag, count in (

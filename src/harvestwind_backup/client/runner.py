@@ -28,6 +28,8 @@ class ProcessStats:
     rsync_ok: int = 0
     rsync_failed: int = 0
     rsync_skipped: int = 0
+    volumes_verify_failed: int = 0
+    rsync_verify_failed: int = 0
 
 
 @dataclass
@@ -94,8 +96,12 @@ class ClientRunner:
             backup_dir = app.path / self.config.volumes.backup_dir
             for volume in self.volume_discovery.get_volumes(compose):
                 result = self.volumes.backup_volume(volume, backup_dir)
-                if result["success"]:
+                if result.get("success"):
                     self.stats.volumes_ok += 1
+                elif result.get("verified") is False:
+                    self.stats.volumes_failed += 1
+                    self.stats.volumes_verify_failed += 1
+                    ok = False
                 else:
                     self.stats.volumes_failed += 1
                     ok = False
@@ -109,6 +115,7 @@ class ClientRunner:
                     self.stats.rsync_ok += 1
                 else:
                     self.stats.rsync_failed += 1
+                    self.stats.rsync_verify_failed += 1
                     ok = False
             except RsyncError as exc:
                 logger.error("Rsync failed for %s: %s", app.name, exc)
@@ -161,6 +168,12 @@ class ClientRunner:
             f"- Volumes OK: {self.stats.volumes_ok} / failed: {self.stats.volumes_failed}",
             f"- Rsync OK: {self.stats.rsync_ok} / failed: {self.stats.rsync_failed}",
         ]
+        if self.stats.volumes_verify_failed:
+            lines.append(
+                f"- Volume verify failed: {self.stats.volumes_verify_failed}"
+            )
+        if self.stats.rsync_verify_failed:
+            lines.append(f"- Rsync verify failed: {self.stats.rsync_verify_failed}")
         if self.transfers.bytes > 0:
             lines.extend(
                 [

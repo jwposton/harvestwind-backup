@@ -104,8 +104,16 @@ ansible-playbook playbooks/deploy_backup.yml -i inventory/hosts.yml
 
 ## Compose labels
 
-- `unifybackup.volumes.exclude: "true"`
-- `unifybackup.app.exclude: "true"`
+Set on the **top-level** `volumes:` entry (not on `services.*.volumes` mounts):
+
+- `unifybackup.volumes.exclude: "true"` — skip Docker volume tar for that named volume (data may still be in the app tree via rsync).
+
+Skip the **entire stack** (no volume tars, no rsync) with `unifybackup.app.exclude: "true"` on:
+
+- compose `x-labels` / `labels`, or
+- any `services.<name>.labels` (one labeled service excludes the whole app folder).
+
+Bind mounts declared under `services` (e.g. `./data:/path`) are backed up via **rsync** of the app directory, not volume tar. Top-level `volumes:` entries with `driver: tmpfs`, `type: bind`, or path-like names (`./foo`) are not tarred.
 
 ## Borg retention
 

@@ -29,7 +29,7 @@ def _server_config() -> ServerConfig:
 @patch("harvestwind_backup.server.runner.NtfyNotifier")
 @patch("harvestwind_backup.server.runner.BorgManager")
 @patch("harvestwind_backup.server.runner.CloudSyncManager")
-def test_cloud_sync_uses_borg_repo_not_rsync_staging(
+def test_cloud_sync_uses_borg_repo_and_verifies(
     cloud_cls: MagicMock,
     borg_cls: MagicMock,
     _ntfy_cls: MagicMock,
@@ -37,6 +37,8 @@ def test_cloud_sync_uses_borg_repo_not_rsync_staging(
     borg = borg_cls.return_value
     borg.create_backup.return_value = (True, None)
     borg.prune_repository.return_value = (True, None)
+    borg.verify_repository.return_value = True
+    borg.repo_info.return_value = {"total_archives": 3, "total_size": 1000}
 
     cloud = cloud_cls.return_value
     cloud.sync.return_value = (True, MagicMock(bytes_transferred=0))
@@ -47,3 +49,21 @@ def test_cloud_sync_uses_borg_repo_not_rsync_staging(
 
     cloud.sync.assert_called_once_with("/srv/backups/nixihost/borg_repo")
     cloud.verify.assert_called_once_with("/srv/backups/nixihost/borg_repo")
+    borg.verify_repository.assert_called_once()
+
+
+@patch("harvestwind_backup.server.runner.NtfyNotifier")
+@patch("harvestwind_backup.server.runner.BorgManager")
+@patch("harvestwind_backup.server.runner.CloudSyncManager")
+def test_skips_b2_when_borg_create_fails(
+    cloud_cls: MagicMock,
+    borg_cls: MagicMock,
+    _ntfy_cls: MagicMock,
+) -> None:
+    borg = borg_cls.return_value
+    borg.create_backup.return_value = (False, None)
+
+    runner = ServerRunner(_server_config())
+    runner.run()
+
+    cloud_cls.return_value.sync.assert_not_called()

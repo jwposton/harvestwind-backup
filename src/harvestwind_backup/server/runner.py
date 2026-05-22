@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import socket
+import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,11 +23,13 @@ class ServerRunner:
     config: ServerConfig
     _started: float = field(default_factory=time.monotonic)
     borg_ok: bool = False
+    borg_verify_ok: bool = True
     prune_ok: bool = True
     cloud_ok: bool = False
     archive_name: str | None = None
     archives_pruned: int = 0
     bytes_synced: int = 0
+    repo_stats: dict | None = None
 
     def __post_init__(self) -> None:
         self.notifier = NtfyNotifier(
@@ -65,43 +68,69 @@ class ServerRunner:
                 "borg create returned an error. Check server logs.",
                 tags=["backup", "server"],
             )
-        elif self.config.borg.retention is not None:
-            prune_ok, prune_stats = self.borg.prune_repository(
-                self.config.borg.retention,
+        else:
+            try:
+                self.repo_stats = self.borg.repo_info()
+            except (subprocess.CalledProcessError, OSError, ValueError) as exc:
+                logger.warning("Failed to collect repository stats: %s", exc)
+
+            if self.config.borg.retention is not None:
+                prune_ok, prune_stats = self.borg.prune_repository(
+                    self.config.borg.retention,
+                    lock_timeout=self.config.lock_timeout,
+                )
+                self.prune_ok = prune_ok
+                if prune_stats:
+                    self.archives_pruned = prune_stats.archives_deleted
+                if not prune_ok:
+                    had_errors = True
+                    self.notifier.notify_if(
+                        "failure",
+                        "Borg prune failed",
+                        "borg prune returned an error. Check server logs.",
+                        tags=["backup", "server"],
+                    )
+
+            self.borg_verify_ok = self.borg.verify_repository(
+                full_check=self.config.borg.full_check,
+                archive_name=archive.name if archive else None,
                 lock_timeout=self.config.lock_timeout,
             )
-            self.prune_ok = prune_ok
-            if prune_stats:
-                self.archives_pruned = prune_stats.archives_deleted
-            if not prune_ok:
+            if not self.borg_verify_ok:
                 had_errors = True
                 self.notifier.notify_if(
                     "failure",
-                    "Borg prune failed",
-                    "borg prune returned an error. Check server logs.",
+                    "Borg verification failed",
+                    "borg check returned an error. Check server logs.",
                     tags=["backup", "server"],
                 )
 
-        cloud_ok, cloud_stats = self.cloud.sync(self.config.borg.repo_path)
-        self.bytes_synced = cloud_stats.bytes_transferred
-        if not cloud_ok:
-            had_errors = True
-            self.notifier.notify_if(
-                "failure",
-                "Cloud sync failed",
-                "rclone sync returned an error. Check server logs.",
-                tags=["backup", "server"],
+        if self.borg_ok and self.borg_verify_ok:
+            cloud_ok, cloud_stats = self.cloud.sync(self.config.borg.repo_path)
+            self.bytes_synced = cloud_stats.bytes_transferred
+            if not cloud_ok:
+                had_errors = True
+                self.notifier.notify_if(
+                    "failure",
+                    "Cloud sync failed",
+                    "rclone sync returned an error. Check server logs.",
+                    tags=["backup", "server"],
+                )
+            elif not self.cloud.verify(self.config.borg.repo_path)[0]:
+                cloud_ok = False
+                had_errors = True
+                self.notifier.notify_if(
+                    "failure",
+                    "Cloud sync verification failed",
+                    "rclone check returned an error. Check server logs.",
+                    tags=["backup", "server"],
+                )
+            self.cloud_ok = cloud_ok
+        else:
+            logger.warning(
+                "Skipping B2 sync because Borg create or verify did not succeed"
             )
-        elif not self.cloud.verify(self.config.borg.repo_path)[0]:
-            cloud_ok = False
-            had_errors = True
-            self.notifier.notify_if(
-                "failure",
-                "Cloud sync verification failed",
-                "rclone check returned an error. Check server logs.",
-                tags=["backup", "server"],
-            )
-        self.cloud_ok = cloud_ok
+            self.cloud_ok = False
 
         wall = time.monotonic() - self._started
         kind = "failure" if had_errors else "success"
@@ -118,12 +147,19 @@ class ServerRunner:
             f"**Duration:** {format_duration(wall)}",
             f"**Borg:** {'OK' if self.borg_ok else 'FAILED'}",
         ]
+        if self.borg_ok:
+            lines.append(
+                f"**Borg verify:** {'OK' if self.borg_verify_ok else 'FAILED'}"
+            )
         if self.config.borg.retention is not None:
             prune_line = "OK" if self.prune_ok else "FAILED"
             if self.archives_pruned:
                 prune_line += f" ({self.archives_pruned} archive(s) pruned)"
             lines.append(f"**Prune:** {prune_line}")
-        lines.append(f"**Cloud:** {'OK' if self.cloud_ok else 'FAILED'}")
+        if self.borg_ok and self.borg_verify_ok:
+            lines.append(f"**Cloud:** {'OK' if self.cloud_ok else 'FAILED'}")
+        else:
+            lines.append("**Cloud:** SKIPPED (Borg failed)")
         if archive:
             lines.extend(
                 [
@@ -133,6 +169,15 @@ class ServerRunner:
                     f"- Deduplicated: {format_bytes(archive.size_deduplicated)}",
                     f"- Files: {archive.num_files}",
                     f"- Borg duration: {archive.duration:.1f}s",
+                ]
+            )
+        if self.repo_stats:
+            lines.extend(
+                [
+                    "",
+                    "**Repository**",
+                    f"- Archives: {self.repo_stats.get('total_archives', 0)}",
+                    f"- Unique size: {format_bytes(self.repo_stats.get('total_size', 0))}",
                 ]
             )
         if self.bytes_synced:

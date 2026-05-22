@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -14,8 +15,8 @@ from .metrics import RsyncStats, parse_rsync_stats
 
 logger = logging.getLogger(__name__)
 
-LABEL_APP_EXCLUDE = "unifybackup.app.exclude"
-
+# Itemized rsync output: file would be transferred on a real run
+_RSYNC_CHANGE = re.compile(r"^[<>ch.*]")
 
 @dataclass
 class RsyncOptions:
@@ -147,33 +148,13 @@ class RsyncManager:
     def backup_app(
         self, app_name: str, source_path: str
     ) -> tuple[bool, RsyncStats | None]:
-        source_dir = Path(source_path).name
-        server_dest: dict[str, Any]
-
-        if self.server_destination.get("type") == "ssh":
-            server_dest = {
-                "type": "ssh",
-                "host": self.server_destination["host"],
-                "user": self.server_destination["user"],
-                "remote_path": os.path.join(
-                    self.server_destination["remote_path"], source_dir
-                ),
-                "port": self.server_destination.get("port", 22),
-                "auth": self.server_destination["auth"],
-                "options": self.server_destination.get("options", {}),
-            }
-        else:
-            server_dest = {
-                "path": os.path.join(
-                    self.server_destination["path"], source_dir
-                ),
-                "options": self.server_destination.get("options", {}),
-            }
+        server_dest = self._server_dest_for_app(source_path)
 
         ok, stats = self.sync(source_path, server_dest, app_name)
         if not ok:
             return False, None
 
+        source_dir = Path(source_path).name
         for dest in self.additional_destinations:
             extra = dict(dest)
             if extra.get("type") == "ssh":
@@ -188,4 +169,94 @@ class RsyncManager:
                 logger.error("Additional destination failed: %s", exc)
                 ok = False
 
+        if ok and not self.verify_app(app_name, source_path, server_dest):
+            return False, stats
+
         return ok, stats
+
+    def _server_dest_for_app(self, source_path: str) -> dict[str, Any]:
+        source_dir = Path(source_path).name
+        if self.server_destination.get("type") == "ssh":
+            return {
+                "type": "ssh",
+                "host": self.server_destination["host"],
+                "user": self.server_destination["user"],
+                "remote_path": os.path.join(
+                    self.server_destination["remote_path"], source_dir
+                ),
+                "port": self.server_destination.get("port", 22),
+                "auth": self.server_destination["auth"],
+                "options": self.server_destination.get("options", {}),
+            }
+        return {
+            "path": os.path.join(self.server_destination["path"], source_dir),
+            "options": self.server_destination.get("options", {}),
+        }
+
+    def _path_matches_exclude(self, path: str, patterns: list[str]) -> bool:
+        for pattern in patterns:
+            pat = pattern.rstrip("/")
+            if path == pat or path.startswith(f"{pat}/"):
+                return True
+            if "*" in pat:
+                regex = "^" + re.escape(pat).replace(r"\*", "[^/]*") + "(/|$)"
+                if re.match(regex, path):
+                    return True
+        return False
+
+    def verify_app(
+        self, app_name: str, source_path: str, dest: dict[str, Any] | None = None
+    ) -> bool:
+        """Dry-run checksum compare: local tree must match remote copy (legacy-style)."""
+        dest = dest or self._server_dest_for_app(source_path)
+        options_dict = dest.get("options") or {}
+        options = RsyncOptions(
+            **{**self.default_options.__dict__, **options_dict}
+        )
+
+        if dest.get("type") == "ssh":
+            destination = f"{dest['user']}@{dest['host']}:{dest['remote_path']}"
+        else:
+            destination = dest["path"]
+
+        cmd = self._build_command(source_path, destination, options)
+        if dest.get("type") == "ssh":
+            cmd[1:1] = self._ssh_wrapper(dest)
+        cmd.extend(["--dry-run", "--checksum", "-i"])
+
+        logger.info("Verifying rsync for %s -> %s", app_name, destination)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            logger.error(
+                "Rsync verify failed for %s (rc=%s): %s",
+                app_name,
+                result.returncode,
+                result.stderr.strip(),
+            )
+            return False
+
+        changes: list[str] = []
+        for line in (result.stdout or "").splitlines():
+            if not line or line.startswith(("sending", "total size")):
+                continue
+            if not _RSYNC_CHANGE.match(line):
+                continue
+            parts = line.split(maxsplit=1)
+            if len(parts) != 2:
+                continue
+            rel = parts[1].lstrip("./")
+            if self._path_matches_exclude(rel, options.exclude):
+                continue
+            changes.append(rel)
+
+        if changes:
+            logger.error(
+                "Rsync verify failed for %s: %d path(s) differ (%s…)",
+                app_name,
+                len(changes),
+                ", ".join(changes[:5]),
+            )
+            return False
+
+        logger.info("Rsync verify passed for %s", app_name)
+        return True

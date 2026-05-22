@@ -8,6 +8,8 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+from .verify import verify_volume_tar
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,6 +58,16 @@ class VolumeManager:
             )
             checksum = self._sha256(tar_path)
             (backup_path / f"{tar_name}.sha256").write_text(f"{checksum}  {tar_name}\n")
+            verify = verify_volume_tar(tar_path)
+            result["verified"] = verify.tar_valid and verify.checksum_valid
+            if not result["verified"]:
+                result["errors"].extend(verify.errors)
+                logger.error(
+                    "Volume backup verification failed for %s: %s",
+                    volume_name,
+                    "; ".join(verify.errors),
+                )
+                return result
             self._prune_old(volume_name, backup_path)
             result["success"] = True
         except (subprocess.CalledProcessError, OSError) as exc:

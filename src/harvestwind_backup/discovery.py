@@ -14,12 +14,44 @@ logger = logging.getLogger(__name__)
 LABEL_VOLUMES_EXCLUDE = "unifybackup.volumes.exclude"
 LABEL_APP_EXCLUDE = "unifybackup.app.exclude"
 
+_BIND_MOUNT_NAME_PREFIXES = (".", "/", "$", "~")
+
 
 @dataclass
 class AppInfo:
     name: str
     path: Path
     compose_file: Path
+
+
+def _label_is_true(labels: object, key: str) -> bool:
+    if not labels:
+        return False
+    if isinstance(labels, dict):
+        return str(labels.get(key, "")).lower() == "true"
+    if isinstance(labels, list):
+        return any(str(item) == f"{key}=true" for item in labels)
+    return False
+
+
+def app_backup_excluded(compose_data: dict) -> bool:
+    """Skip entire stack if app.exclude is set on stack labels or any service."""
+    for key in ("x-labels", "labels"):
+        if _label_is_true(compose_data.get(key), LABEL_APP_EXCLUDE):
+            logger.info("Stack excluded by %s on compose root", key)
+            return True
+
+    for service_name, service in (compose_data.get("services") or {}).items():
+        if not isinstance(service, dict):
+            continue
+        if _label_is_true(service.get("labels"), LABEL_APP_EXCLUDE):
+            logger.info(
+                "Stack excluded: service %s has %s",
+                service_name,
+                LABEL_APP_EXCLUDE,
+            )
+            return True
+    return False
 
 
 class VolumeDiscovery:
@@ -30,12 +62,13 @@ class VolumeDiscovery:
         if "volumes" not in compose_data:
             return []
 
-        if self._stack_excluded(compose_data):
+        if self._stack_volumes_excluded(compose_data):
             return []
 
         names: list[str] = []
         for volume_name, volume_config in compose_data["volumes"].items():
             if not self._is_named_volume(volume_name, volume_config):
+                logger.debug("Skipping %s: not a named Docker volume", volume_name)
                 continue
             if self._volume_excluded(volume_config):
                 continue
@@ -44,10 +77,9 @@ class VolumeDiscovery:
             names.append(volume_name)
         return names
 
-    def _stack_excluded(self, compose_data: dict) -> bool:
+    def _stack_volumes_excluded(self, compose_data: dict) -> bool:
         for key in ("x-labels", "labels"):
-            labels = compose_data.get(key) or {}
-            if str(labels.get(LABEL_VOLUMES_EXCLUDE, "")).lower() == "true":
+            if _label_is_true(compose_data.get(key), LABEL_VOLUMES_EXCLUDE):
                 return True
         return False
 
@@ -55,12 +87,20 @@ class VolumeDiscovery:
         if not isinstance(volume_config, dict):
             return False
         labels = volume_config.get("labels") or {}
-        return str(labels.get(LABEL_VOLUMES_EXCLUDE, "")).lower() == "true"
+        return _label_is_true(labels, LABEL_VOLUMES_EXCLUDE)
 
-    def _is_named_volume(self, name: str, config: dict | str) -> bool:
-        if isinstance(config, dict) and config.get("external"):
+    def _is_named_volume(self, name: str, config: dict | str | None) -> bool:
+        if name.startswith(_BIND_MOUNT_NAME_PREFIXES):
+            return False
+        if config is None:
             return True
-        return not (isinstance(config, dict) and "driver" in config and name.startswith("./"))
+        if not isinstance(config, dict):
+            return True
+        if config.get("driver") == "tmpfs":
+            return False
+        if config.get("type") == "bind":
+            return False
+        return True
 
     def _volume_exists(self, volume_name: str) -> bool:
         result = subprocess.run(
@@ -86,8 +126,7 @@ def discover_apps(apps_root: Path) -> list[AppInfo]:
             logger.warning("Skipping %s: %s", name, exc)
             continue
 
-        labels = data.get("x-labels") or data.get("labels") or {}
-        if str(labels.get(LABEL_APP_EXCLUDE, "")).lower() == "true":
+        if app_backup_excluded(data):
             logger.info("Skipping app %s (excluded by label)", name)
             continue
 
