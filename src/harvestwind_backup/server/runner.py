@@ -95,11 +95,6 @@ class ServerRunner:
                 tags=["backup", "server"],
             )
         else:
-            try:
-                self.repo_stats = self.borg.repo_info()
-            except (subprocess.CalledProcessError, OSError, ValueError) as exc:
-                logger.warning("Failed to collect repository stats: %s", exc)
-
             if self.config.borg.retention is not None:
                 prune_ok, prune_stats = self.borg.prune_repository(
                     self.config.borg.retention,
@@ -131,6 +126,11 @@ class ServerRunner:
                     "borg check returned an error. Check server logs.",
                     tags=["backup", "server"],
                 )
+
+            try:
+                self.repo_stats = self.borg.repo_info()
+            except (subprocess.CalledProcessError, OSError, ValueError) as exc:
+                logger.warning("Failed to collect repository stats: %s", exc)
 
         if self.borg_ok and self.borg_verify_ok:
             cloud_ok, cloud_stats = self.cloud.sync(self.config.borg.repo_path)

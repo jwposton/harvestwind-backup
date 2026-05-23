@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import BorgRetention
+from .metrics import parse_byte_size
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,81 @@ _RE_PRUNED_ARCHIVE = re.compile(
 def parse_prune_deleted_count(output: str) -> int:
     """Count archives removed by ``borg prune --list`` (not dry-run ``Would prune``)."""
     return len(_RE_PRUNED_ARCHIVE.findall(output))
+
+
+_RE_THIS_ARCHIVE_ROW = re.compile(
+    r"This archive:\s+"
+    r"([\d,]+(?:\.\d+)?\s*[KMGT]?i?B)\s+"
+    r"([\d,]+(?:\.\d+)?\s*[KMGT]?i?B)\s+"
+    r"([\d,]+(?:\.\d+)?\s*[KMGT]?i?B)",
+    re.IGNORECASE,
+)
+def _parse_size_token(token: str) -> int:
+    parts = token.strip().split(maxsplit=1)
+    if len(parts) == 2:
+        return parse_byte_size(parts[0], parts[1])
+    return parse_byte_size(parts[0])
+
+
+def _grab_stat_label(output: str, label: str) -> int:
+    for pattern in (
+        rf"{re.escape(label)}:\s*([\d,]+(?:\.\d+)?\s*[KMGT]?i?B)",
+        rf"{re.escape(label)}\s+([\d,]+(?:\.\d+)?\s*[KMGT]?i?B)",
+        rf"{re.escape(label)}:\s*([\d,]+)",
+        rf"{re.escape(label)}\s+(\d+)",
+    ):
+        match = re.search(pattern, output, flags=re.IGNORECASE)
+        if match:
+            value = match.group(1)
+            if re.search(r"[KMGT]i?B", value, re.IGNORECASE):
+                return _parse_size_token(value)
+            return int(value.replace(",", ""))
+    return 0
+
+
+def parse_create_stats(output: str, archive_name: str, duration: float) -> BorgArchiveStats:
+    """Parse ``borg create --stats`` (human-readable or plain-byte output)."""
+    row = _RE_THIS_ARCHIVE_ROW.search(output)
+    if row:
+        return BorgArchiveStats(
+            name=archive_name,
+            size_orig=_parse_size_token(row.group(1)),
+            size_compressed=_parse_size_token(row.group(2)),
+            size_deduplicated=_parse_size_token(row.group(3)),
+            num_files=_grab_stat_label(output, "Number of files"),
+            duration=duration,
+        )
+    return BorgArchiveStats(
+        name=archive_name,
+        size_orig=_grab_stat_label(output, "Original size"),
+        size_compressed=_grab_stat_label(output, "Compressed size"),
+        size_deduplicated=_grab_stat_label(output, "Deduplicated size"),
+        num_files=_grab_stat_label(output, "Number of files"),
+        duration=duration,
+    )
+
+
+def parse_repo_info_json(data: dict) -> dict[str, int]:
+    """Parse ``borg info --json`` for archive count and unique repo size."""
+    archives = data.get("archives")
+    if isinstance(archives, list):
+        total_archives = len(archives)
+    elif isinstance(archives, dict):
+        total_archives = int(archives.get("count", 0))
+    else:
+        total_archives = 0
+
+    cache = data.get("cache") or {}
+    stats = cache.get("stats") or {}
+    unique = stats.get("unique") or {}
+    total_size = unique.get("total_size")
+    if total_size is None:
+        total_size = stats.get("total_size", 0)
+
+    return {
+        "total_archives": total_archives,
+        "total_size": int(total_size or 0),
+    }
 
 
 class BorgManager:
@@ -82,7 +158,7 @@ class BorgManager:
             logger.error("borg create failed: %s", result.stderr)
             return False, None
 
-        stats = self._parse_stats(result.stderr + result.stdout, archive_name, duration)
+        stats = parse_create_stats(result.stderr + result.stdout, archive_name, duration)
         return True, stats
 
     def list_archives(self) -> list[str]:
@@ -175,34 +251,11 @@ class BorgManager:
         )
         return True, stats
 
-    def _parse_stats(
-        self, output: str, archive_name: str, duration: float
-    ) -> BorgArchiveStats:
-        def grab(pattern: str) -> int:
-            match = re.search(pattern, output)
-            if not match:
-                return 0
-            return int(match.group(1).replace(",", ""))
-
-        return BorgArchiveStats(
-            name=archive_name,
-            size_orig=grab(r"Original size\s+(\d+)"),
-            size_compressed=grab(r"Compressed size\s+(\d+)"),
-            size_deduplicated=grab(r"Deduplicated size\s+(\d+)"),
-            num_files=grab(r"Number of files\s+(\d+)"),
-            duration=duration,
-        )
-
-    def repo_info(self) -> dict:
+    def repo_info(self) -> dict[str, int]:
         result = subprocess.run(
             ["borg", "info", "--json", str(self.repo_path)],
             capture_output=True,
             text=True,
             check=True,
         )
-        data = json.loads(result.stdout)
-        cache = data.get("cache", {})
-        return {
-            "total_archives": data.get("archives", {}).get("count", 0),
-            "total_size": cache.get("stats", {}).get("unique", {}).get("total_size", 0),
-        }
+        return parse_repo_info_json(json.loads(result.stdout))
