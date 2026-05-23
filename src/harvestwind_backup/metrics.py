@@ -83,6 +83,7 @@ class RsyncStats:
     files_transferred: int = 0
     bytes_transferred: int = 0
     bytes_per_sec: float = 0.0
+    duration: float = 0.0
 
     @property
     def effective_bytes_per_sec(self) -> float:

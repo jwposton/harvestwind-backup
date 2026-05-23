@@ -17,7 +17,9 @@ def test_verify_latest_archive(mock_run: MagicMock, tmp_path) -> None:
         tmp_path / "data",
         "lz4",
     )
-    assert manager.verify_repository(archive_name="2026-01-01_00-00-00") is True
+    ok, duration = manager.verify_repository(archive_name="2026-01-01_00-00-00")
+    assert ok is True
+    assert duration >= 0
     check_cmd = mock_run.call_args_list[-1][0][0]
     assert check_cmd[:2] == ["borg", "check"]
     assert "::2026-01-01_00-00-00" in check_cmd[-1]

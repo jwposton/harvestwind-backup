@@ -97,7 +97,7 @@ class BorgManager:
         full_check: bool = False,
         archive_name: str | None = None,
         lock_timeout: int = 300,
-    ) -> bool:
+    ) -> tuple[bool, float]:
         if full_check:
             cmd = ["borg", "check", f"--lock-wait={lock_timeout}", str(self.repo_path)]
             label = "full repository"
@@ -107,7 +107,7 @@ class BorgManager:
                 archives = self.list_archives()
                 if not archives:
                     logger.error("borg verify: no archives in repository")
-                    return False
+                    return False, 0.0
                 name = archives[-1]
             cmd = [
                 "borg",
@@ -117,12 +117,14 @@ class BorgManager:
             ]
             label = f"archive {name}"
         logger.info("borg check starting (%s)", label)
+        start = datetime.now()
         result = subprocess.run(cmd, capture_output=True, text=True)
+        duration = (datetime.now() - start).total_seconds()
         if result.returncode != 0:
             logger.error("borg check failed (%s): %s", label, result.stderr)
-            return False
-        logger.info("borg check passed (%s)", label)
-        return True
+            return False, duration
+        logger.info("borg check passed (%s) in %.1fs", label, duration)
+        return True, duration
 
     def prune_argv(self, retention: BorgRetention, lock_timeout: int = 300) -> list[str]:
         cmd = ["borg", "prune", f"--lock-wait={lock_timeout}", "--stats"]

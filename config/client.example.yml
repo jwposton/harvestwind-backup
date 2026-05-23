@@ -26,6 +26,10 @@ backup:
 
     additional_destinations: []
 
+    # Post-sync dry-run. Defaults match sync (mtime+size). Checksum is opt-in.
+    verify:
+      skip_if_unchanged: true
+
   ntfy:
     enabled: true
     url: https://ntfy.harvestwind.org

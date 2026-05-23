@@ -37,7 +37,7 @@ def test_cloud_sync_uses_borg_repo_and_verifies(
     borg = borg_cls.return_value
     borg.create_backup.return_value = (True, None)
     borg.prune_repository.return_value = (True, None)
-    borg.verify_repository.return_value = True
+    borg.verify_repository.return_value = (True, 1.0)
     borg.repo_info.return_value = {"total_archives": 3, "total_size": 1000}
 
     cloud = cloud_cls.return_value

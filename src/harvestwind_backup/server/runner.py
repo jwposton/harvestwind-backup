@@ -30,6 +30,11 @@ class ServerRunner:
     archives_pruned: int = 0
     bytes_synced: int = 0
     repo_stats: dict | None = None
+    borg_create_seconds: float = 0.0
+    borg_verify_seconds: float = 0.0
+    prune_seconds: float = 0.0
+    cloud_sync_seconds: float = 0.0
+    cloud_verify_seconds: float = 0.0
 
     def __post_init__(self) -> None:
         self.notifier = NtfyNotifier(
@@ -60,6 +65,7 @@ class ServerRunner:
         self.borg_ok = ok
         if archive:
             self.archive_name = archive.name
+            self.borg_create_seconds = archive.duration
         if not ok:
             had_errors = True
             self.notifier.notify_if(
@@ -82,6 +88,7 @@ class ServerRunner:
                 self.prune_ok = prune_ok
                 if prune_stats:
                     self.archives_pruned = prune_stats.archives_deleted
+                    self.prune_seconds = prune_stats.duration
                 if not prune_ok:
                     had_errors = True
                     self.notifier.notify_if(
@@ -91,7 +98,7 @@ class ServerRunner:
                         tags=["backup", "server"],
                     )
 
-            self.borg_verify_ok = self.borg.verify_repository(
+            self.borg_verify_ok, self.borg_verify_seconds = self.borg.verify_repository(
                 full_check=self.config.borg.full_check,
                 archive_name=archive.name if archive else None,
                 lock_timeout=self.config.lock_timeout,
@@ -108,6 +115,7 @@ class ServerRunner:
         if self.borg_ok and self.borg_verify_ok:
             cloud_ok, cloud_stats = self.cloud.sync(self.config.borg.repo_path)
             self.bytes_synced = cloud_stats.bytes_transferred
+            self.cloud_sync_seconds = cloud_stats.duration
             if not cloud_ok:
                 had_errors = True
                 self.notifier.notify_if(
@@ -116,15 +124,18 @@ class ServerRunner:
                     "rclone sync returned an error. Check server logs.",
                     tags=["backup", "server"],
                 )
-            elif not self.cloud.verify(self.config.borg.repo_path)[0]:
-                cloud_ok = False
-                had_errors = True
-                self.notifier.notify_if(
-                    "failure",
-                    "Cloud sync verification failed",
-                    "rclone check returned an error. Check server logs.",
-                    tags=["backup", "server"],
-                )
+            else:
+                verify_ok, verify_stats = self.cloud.verify(self.config.borg.repo_path)
+                self.cloud_verify_seconds = verify_stats.duration
+                if not verify_ok:
+                    cloud_ok = False
+                    had_errors = True
+                    self.notifier.notify_if(
+                        "failure",
+                        "Cloud sync verification failed",
+                        "rclone check returned an error. Check server logs.",
+                        tags=["backup", "server"],
+                    )
             self.cloud_ok = cloud_ok
         else:
             logger.warning(
@@ -143,10 +154,30 @@ class ServerRunner:
         return not had_errors
 
     def _summary(self, wall: float, archive) -> str:
+        backup_secs = (
+            self.borg_create_seconds + self.prune_seconds + self.cloud_sync_seconds
+        )
+        verify_secs = self.borg_verify_seconds + self.cloud_verify_seconds
         lines = [
-            f"**Duration:** {format_duration(wall)}",
-            f"**Borg:** {'OK' if self.borg_ok else 'FAILED'}",
+            f"**Duration:** {format_duration(wall)} (total)",
+            f"- Backup: {format_duration(backup_secs)}",
+            f"- Verify: {format_duration(verify_secs)}",
         ]
+        for label, seconds in (
+            ("Borg create", self.borg_create_seconds),
+            ("Borg verify", self.borg_verify_seconds),
+            ("Prune", self.prune_seconds),
+            ("Cloud sync", self.cloud_sync_seconds),
+            ("Cloud verify", self.cloud_verify_seconds),
+        ):
+            if seconds:
+                lines.append(f"  - {label}: {format_duration(seconds)}")
+        lines.extend(
+            [
+                "",
+                f"**Borg:** {'OK' if self.borg_ok else 'FAILED'}",
+            ]
+        )
         if self.borg_ok:
             lines.append(
                 f"**Borg verify:** {'OK' if self.borg_verify_ok else 'FAILED'}"
@@ -168,7 +199,6 @@ class ServerRunner:
                     f"- Original: {format_bytes(archive.size_orig)}",
                     f"- Deduplicated: {format_bytes(archive.size_deduplicated)}",
                     f"- Files: {archive.num_files}",
-                    f"- Borg duration: {archive.duration:.1f}s",
                 ]
             )
         if self.repo_stats:

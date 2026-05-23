@@ -30,6 +30,8 @@ class ProcessStats:
     rsync_skipped: int = 0
     volumes_verify_failed: int = 0
     rsync_verify_failed: int = 0
+    backup_seconds: float = 0.0
+    verify_seconds: float = 0.0
 
 
 @dataclass
@@ -96,6 +98,8 @@ class ClientRunner:
             backup_dir = app.path / self.config.volumes.backup_dir
             for volume in self.volume_discovery.get_volumes(compose):
                 result = self.volumes.backup_volume(volume, backup_dir)
+                self.stats.backup_seconds += result.get("backup_duration", 0.0)
+                self.stats.verify_seconds += result.get("verify_duration", 0.0)
                 if result.get("success"):
                     self.stats.volumes_ok += 1
                 elif result.get("verified") is False:
@@ -107,7 +111,11 @@ class ClientRunner:
                     ok = False
 
             try:
-                rsync_ok, rsync_stats = self.rsync.backup_app(app.name, str(app.path))
+                rsync_ok, rsync_stats, rsync_backup_secs, rsync_verify_secs = (
+                    self.rsync.backup_app(app.name, str(app.path))
+                )
+                self.stats.backup_seconds += rsync_backup_secs
+                self.stats.verify_seconds += rsync_verify_secs
                 if rsync_ok and rsync_stats:
                     self.stats.rsync_ok += 1
                     self.transfers.add(rsync_stats)
@@ -161,7 +169,9 @@ class ClientRunner:
         status = "Failed" if had_errors else "Success"
         lines = [
             f"**Status:** {status}",
-            f"**Duration:** {format_duration(wall_seconds)}",
+            f"**Duration:** {format_duration(wall_seconds)} (total)",
+            f"- Backup: {format_duration(self.stats.backup_seconds)}",
+            f"- Verify: {format_duration(self.stats.verify_seconds)}",
             "",
             "**Counts**",
             f"- Apps OK: {self.stats.apps_ok} / failed: {self.stats.apps_failed}",

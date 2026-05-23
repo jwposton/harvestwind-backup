@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -25,6 +26,8 @@ class VolumeManager:
             "volume": volume_name,
             "tar_path": None,
             "errors": [],
+            "backup_duration": 0.0,
+            "verify_duration": 0.0,
         }
         try:
             backup_path.mkdir(parents=True, exist_ok=True)
@@ -33,6 +36,7 @@ class VolumeManager:
             tar_path = backup_path / tar_name
             result["tar_path"] = str(tar_path)
 
+            backup_start = time.monotonic()
             subprocess.run(
                 ["chown", f"{self.uid}:{self.gid}", str(backup_path)],
                 check=True,
@@ -56,9 +60,12 @@ class VolumeManager:
                 ],
                 check=True,
             )
+            result["backup_duration"] = time.monotonic() - backup_start
             checksum = self._sha256(tar_path)
             (backup_path / f"{tar_name}.sha256").write_text(f"{checksum}  {tar_name}\n")
+            verify_start = time.monotonic()
             verify = verify_volume_tar(tar_path)
+            result["verify_duration"] = time.monotonic() - verify_start
             result["verified"] = verify.tar_valid and verify.checksum_valid
             if not result["verified"]:
                 result["errors"].extend(verify.errors)

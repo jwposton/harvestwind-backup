@@ -34,6 +34,26 @@ class RsyncOptions:
     include: list[str] = field(default_factory=list)
 
 
+@dataclass
+class RsyncVerifyConfig:
+    """Post-sync rsync dry-run. Defaults match the sync pass (mtime+size, not checksum)."""
+
+    enabled: bool = True
+    checksum: bool | None = None
+    skip_if_unchanged: bool = True
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "RsyncVerifyConfig":
+        if not data:
+            return cls()
+        checksum = data.get("checksum")
+        return cls(
+            enabled=bool(data.get("enabled", True)),
+            checksum=bool(checksum) if checksum is not None else None,
+            skip_if_unchanged=bool(data.get("skip_if_unchanged", True)),
+        )
+
+
 class RsyncError(Exception):
     pass
 
@@ -42,6 +62,7 @@ class RsyncManager:
     def __init__(self, config: dict[str, Any]):
         self.server_destination = config.get("server_destination", {})
         self.additional_destinations = config.get("additional_destinations", [])
+        self.verify_config = RsyncVerifyConfig.from_dict(config.get("verify"))
         self.default_options = RsyncOptions(
             compress=config.get("compress", False),
             delete=config.get("delete", True),
@@ -136,6 +157,7 @@ class RsyncManager:
             )
 
         stats = parse_rsync_stats(combined, wall_seconds=wall)
+        stats.duration = wall
         logger.info(
             "Rsync %s: %s files, %s bytes in %s",
             app_name,
@@ -147,12 +169,13 @@ class RsyncManager:
 
     def backup_app(
         self, app_name: str, source_path: str
-    ) -> tuple[bool, RsyncStats | None]:
+    ) -> tuple[bool, RsyncStats | None, float, float]:
         server_dest = self._server_dest_for_app(source_path)
 
         ok, stats = self.sync(source_path, server_dest, app_name)
+        backup_secs = stats.duration if stats else 0.0
         if not ok:
-            return False, None
+            return False, None, backup_secs, 0.0
 
         source_dir = Path(source_path).name
         for dest in self.additional_destinations:
@@ -169,10 +192,28 @@ class RsyncManager:
                 logger.error("Additional destination failed: %s", exc)
                 ok = False
 
-        if ok and not self.verify_app(app_name, source_path, server_dest):
-            return False, stats
+        verify_secs = 0.0
+        if ok:
+            verify_cfg = self._verify_config_for(server_dest)
+            if not verify_cfg.enabled:
+                logger.info("Rsync verify disabled for %s", app_name)
+            elif (
+                verify_cfg.skip_if_unchanged
+                and stats
+                and stats.files_transferred == 0
+            ):
+                logger.info(
+                    "Skipping rsync verify for %s (no files transferred)",
+                    app_name,
+                )
+            else:
+                ok, verify_secs = self.verify_app(
+                    app_name, source_path, server_dest, verify_cfg=verify_cfg
+                )
+                if not ok:
+                    return False, stats, backup_secs, verify_secs
 
-        return ok, stats
+        return ok, stats, backup_secs, verify_secs
 
     def _server_dest_for_app(self, source_path: str) -> dict[str, Any]:
         source_dir = Path(source_path).name
@@ -204,14 +245,48 @@ class RsyncManager:
                     return True
         return False
 
-    def verify_app(
-        self, app_name: str, source_path: str, dest: dict[str, Any] | None = None
+    def _verify_config_for(self, dest: dict[str, Any]) -> RsyncVerifyConfig:
+        dest_verify = dest.get("verify") or (dest.get("options") or {}).get("verify")
+        if not dest_verify:
+            return self.verify_config
+        merged: dict[str, Any] = {
+            "enabled": self.verify_config.enabled,
+            "skip_if_unchanged": self.verify_config.skip_if_unchanged,
+        }
+        if self.verify_config.checksum is not None:
+            merged["checksum"] = self.verify_config.checksum
+        merged.update(dest_verify)
+        return RsyncVerifyConfig.from_dict(merged)
+
+    def _verify_checksum(
+        self, verify_cfg: RsyncVerifyConfig, sync_options: RsyncOptions
     ) -> bool:
-        """Dry-run checksum compare: local tree must match remote copy (legacy-style)."""
+        if verify_cfg.checksum is not None:
+            return verify_cfg.checksum
+        return sync_options.checksum
+
+    def verify_app(
+        self,
+        app_name: str,
+        source_path: str,
+        dest: dict[str, Any] | None = None,
+        *,
+        verify_cfg: RsyncVerifyConfig | None = None,
+    ) -> tuple[bool, float]:
+        """Dry-run compare: local tree must match remote copy.
+
+        Uses the same comparison mode as sync (mtime+size by default). Full
+        checksum verify is opt-in via ``rsync.verify.checksum: true``.
+        """
         dest = dest or self._server_dest_for_app(source_path)
+        verify_cfg = verify_cfg or self._verify_config_for(dest)
         options_dict = dest.get("options") or {}
         options = RsyncOptions(
             **{**self.default_options.__dict__, **options_dict}
+        )
+        verify_checksum = self._verify_checksum(verify_cfg, options)
+        verify_options = RsyncOptions(
+            **{**options.__dict__, "checksum": verify_checksum}
         )
 
         if dest.get("type") == "ssh":
@@ -219,13 +294,21 @@ class RsyncManager:
         else:
             destination = dest["path"]
 
-        cmd = self._build_command(source_path, destination, options)
+        cmd = self._build_command(source_path, destination, verify_options)
         if dest.get("type") == "ssh":
             cmd[1:1] = self._ssh_wrapper(dest)
-        cmd.extend(["--dry-run", "--checksum", "-i"])
+        cmd.extend(["--dry-run", "-i"])
 
-        logger.info("Verifying rsync for %s -> %s", app_name, destination)
+        mode = "checksum" if verify_checksum else "mtime+size"
+        logger.info(
+            "Verifying rsync for %s -> %s (%s)",
+            app_name,
+            destination,
+            mode,
+        )
+        start = time.monotonic()
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        duration = time.monotonic() - start
         if result.returncode != 0:
             logger.error(
                 "Rsync verify failed for %s (rc=%s): %s",
@@ -233,7 +316,7 @@ class RsyncManager:
                 result.returncode,
                 result.stderr.strip(),
             )
-            return False
+            return False, duration
 
         changes: list[str] = []
         for line in (result.stdout or "").splitlines():
@@ -245,7 +328,7 @@ class RsyncManager:
             if len(parts) != 2:
                 continue
             rel = parts[1].lstrip("./")
-            if self._path_matches_exclude(rel, options.exclude):
+            if self._path_matches_exclude(rel, verify_options.exclude):
                 continue
             changes.append(rel)
 
@@ -256,7 +339,7 @@ class RsyncManager:
                 len(changes),
                 ", ".join(changes[:5]),
             )
-            return False
+            return False, duration
 
-        logger.info("Rsync verify passed for %s", app_name)
-        return True
+        logger.info("Rsync verify passed for %s in %.1fs", app_name, duration)
+        return True, duration
