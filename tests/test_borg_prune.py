@@ -12,6 +12,7 @@ def test_prune_argv_builds_keep_flags():
     assert "--keep-daily=7" in argv
     assert "--keep-weekly=4" in argv
     assert "--keep-monthly=6" in argv
+    assert "--list" in argv
     assert "--keep-yearly" not in " ".join(argv)
     assert argv[-1] == "/srv/backups/borg_repo"
 
@@ -54,3 +55,15 @@ def test_borg_retention_defaults():
     assert retention.daily == 7
     assert retention.weekly == 4
     assert retention.monthly == 6
+
+
+def test_parse_prune_deleted_count():
+    from harvestwind_backup.borg import parse_prune_deleted_count
+
+    sample = """
+Keeping archive (rule: daily #1):        2026-05-18_03-12-36
+Pruning:                                   2026-03-02_03-06-35
+Would prune:                               2026-02-16_03-05-58
+Pruning archive:                           2026-01-05_03-04-51
+"""
+    assert parse_prune_deleted_count(sample) == 2

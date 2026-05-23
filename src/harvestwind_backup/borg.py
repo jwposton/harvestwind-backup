@@ -32,6 +32,17 @@ class BorgPruneStats:
     duration: float = 0.0
 
 
+_RE_PRUNED_ARCHIVE = re.compile(
+    r"^\s*Pruning(?: archive)?:\s+\S",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def parse_prune_deleted_count(output: str) -> int:
+    """Count archives removed by ``borg prune --list`` (not dry-run ``Would prune``)."""
+    return len(_RE_PRUNED_ARCHIVE.findall(output))
+
+
 class BorgManager:
     def __init__(
         self,
@@ -127,7 +138,7 @@ class BorgManager:
         return True, duration
 
     def prune_argv(self, retention: BorgRetention, lock_timeout: int = 300) -> list[str]:
-        cmd = ["borg", "prune", f"--lock-wait={lock_timeout}", "--stats"]
+        cmd = ["borg", "prune", f"--lock-wait={lock_timeout}", "--stats", "--list"]
         for flag, count in (
             ("--keep-daily", retention.daily),
             ("--keep-weekly", retention.weekly),
@@ -152,7 +163,7 @@ class BorgManager:
             logger.error("borg prune failed: %s", result.stderr)
             return False, None
 
-        pruning = re.findall(r"Pruning archive\b", combined, flags=re.IGNORECASE)
+        pruning = parse_prune_deleted_count(combined)
         stats = BorgPruneStats(
             archives_deleted=len(pruning),
             duration=duration,
