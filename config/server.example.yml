@@ -1,6 +1,8 @@
 backup:
   server:
     lock_timeout: 300
+    staging_lock_wait_timeout: 10800
+    staging_lock_poll_interval: 30
 
   borg:
     repo_path: /srv/backups/borg_repo   # borg create target; rclone sync source

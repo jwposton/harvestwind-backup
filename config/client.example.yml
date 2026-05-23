@@ -30,6 +30,9 @@ backup:
     verify:
       skip_if_unchanged: true
 
+    staging_lock:
+      enabled: true
+
   ntfy:
     enabled: true
     url: https://ntfy.harvestwind.org

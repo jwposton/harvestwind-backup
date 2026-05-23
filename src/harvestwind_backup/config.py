@@ -83,6 +83,8 @@ class ServerConfig:
     b2: B2Config
     ntfy: NtfyConfig
     lock_timeout: int = 300
+    staging_lock_wait_timeout: int = 10800
+    staging_lock_poll_interval: int = 30
 
     @classmethod
     def from_yaml(cls, path: Path) -> "ServerConfig":
@@ -112,4 +114,6 @@ class ServerConfig:
             b2=B2Config(**backup["b2"]),
             ntfy=NtfyConfig.from_dict(backup.get("ntfy")),
             lock_timeout=int(server.get("lock_timeout", 300)),
+            staging_lock_wait_timeout=int(server.get("staging_lock_wait_timeout", 10800)),
+            staging_lock_poll_interval=int(server.get("staging_lock_poll_interval", 30)),
         )

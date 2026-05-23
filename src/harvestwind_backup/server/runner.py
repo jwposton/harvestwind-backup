@@ -14,6 +14,7 @@ from ..cloud import CloudSyncManager
 from ..config import ServerConfig
 from ..metrics import format_bytes, format_duration, format_throughput
 from ..notify.ntfy import NtfyNotifier
+from ..staging_lock import staging_lock_path, wait_for_staging_unlock
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ class ServerRunner:
     prune_seconds: float = 0.0
     cloud_sync_seconds: float = 0.0
     cloud_verify_seconds: float = 0.0
+    staging_lock_wait_seconds: float = 0.0
 
     def __post_init__(self) -> None:
         self.notifier = NtfyNotifier(
@@ -61,6 +63,24 @@ class ServerRunner:
         )
 
         had_errors = False
+        lock_ok, self.staging_lock_wait_seconds = wait_for_staging_unlock(
+            self.config.borg.backup_path,
+            timeout=self.config.staging_lock_wait_timeout,
+            poll_interval=self.config.staging_lock_poll_interval,
+        )
+        if not lock_ok:
+            had_errors = True
+            self.notifier.notify_if(
+                "failure",
+                "Server backup aborted (client still syncing)",
+                (
+                    f"Timed out after {format_duration(self.config.staging_lock_wait_timeout)} "
+                    f"waiting for `{staging_lock_path(self.config.borg.backup_path)}`."
+                ),
+                tags=["backup", "server"],
+            )
+            return False
+
         ok, archive = self.borg.create_backup(lock_timeout=self.config.lock_timeout)
         self.borg_ok = ok
         if archive:
@@ -172,6 +192,10 @@ class ServerRunner:
         ):
             if seconds:
                 lines.append(f"  - {label}: {format_duration(seconds)}")
+        if self.staging_lock_wait_seconds:
+            lines.append(
+                f"  - Staging lock wait: {format_duration(self.staging_lock_wait_seconds)}"
+            )
         lines.extend(
             [
                 "",

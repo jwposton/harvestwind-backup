@@ -26,6 +26,7 @@ def _server_config() -> ServerConfig:
     )
 
 
+@patch("harvestwind_backup.server.runner.wait_for_staging_unlock", return_value=(True, 0.0))
 @patch("harvestwind_backup.server.runner.NtfyNotifier")
 @patch("harvestwind_backup.server.runner.BorgManager")
 @patch("harvestwind_backup.server.runner.CloudSyncManager")
@@ -33,6 +34,7 @@ def test_cloud_sync_uses_borg_repo_and_verifies(
     cloud_cls: MagicMock,
     borg_cls: MagicMock,
     _ntfy_cls: MagicMock,
+    _wait_lock: MagicMock,
 ) -> None:
     borg = borg_cls.return_value
     borg.create_backup.return_value = (True, None)
@@ -52,6 +54,7 @@ def test_cloud_sync_uses_borg_repo_and_verifies(
     borg.verify_repository.assert_called_once()
 
 
+@patch("harvestwind_backup.server.runner.wait_for_staging_unlock", return_value=(True, 0.0))
 @patch("harvestwind_backup.server.runner.NtfyNotifier")
 @patch("harvestwind_backup.server.runner.BorgManager")
 @patch("harvestwind_backup.server.runner.CloudSyncManager")
@@ -59,6 +62,7 @@ def test_skips_b2_when_borg_create_fails(
     cloud_cls: MagicMock,
     borg_cls: MagicMock,
     _ntfy_cls: MagicMock,
+    _wait_lock: MagicMock,
 ) -> None:
     borg = borg_cls.return_value
     borg.create_backup.return_value = (False, None)

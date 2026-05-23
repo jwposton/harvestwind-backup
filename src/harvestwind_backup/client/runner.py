@@ -14,6 +14,7 @@ from ..discovery import VolumeDiscovery, discover_apps
 from ..metrics import TransferTotals, format_bytes, format_duration, format_throughput
 from ..notify.ntfy import NtfyNotifier
 from ..rsync import RsyncError, RsyncManager
+from ..staging_lock import StagingLockError, client_staging_lock
 from ..volumes import VolumeManager
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,30 @@ class ClientRunner:
         self.volume_discovery = VolumeDiscovery()
 
     def run(self) -> bool:
+        self._started = time.monotonic()
+        staging_lock = client_staging_lock(
+            self.config.rsync, hostname=socket.gethostname()
+        )
+        try:
+            if staging_lock is not None:
+                staging_lock.acquire()
+        except StagingLockError as exc:
+            logger.error("Staging lock unavailable: %s", exc)
+            self.notifier.notify_if(
+                "failure",
+                "Backup aborted (staging lock)",
+                str(exc),
+                tags=["backup", "client"],
+            )
+            return False
+
+        try:
+            return self._run_backup()
+        finally:
+            if staging_lock is not None:
+                staging_lock.release()
+
+    def _run_backup(self) -> bool:
         self._started = time.monotonic()
         self.notifier.notify_if(
             "success",
