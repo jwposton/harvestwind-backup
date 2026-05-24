@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock, patch
+
 from harvestwind_backup.borg import BorgManager
 from harvestwind_backup.config import BorgRetention, ServerConfig
 
@@ -67,3 +69,21 @@ Would prune:                               2026-02-16_03-05-58
 Pruning archive:                           2026-01-05_03-04-51
 """
     assert parse_prune_deleted_count(sample) == 2
+
+
+@patch("harvestwind_backup.borg.subprocess.run")
+def test_prune_repository_counts_deleted_archives(mock_run):
+    manager = BorgManager.__new__(BorgManager)
+    manager.repo_path = "/srv/backups/borg_repo"
+
+    mock_run.return_value = MagicMock(
+        returncode=0,
+        stdout="Pruning:                                   2026-03-02_03-06-35\n",
+        stderr="Pruning archive:                           2026-01-05_03-04-51\n",
+    )
+
+    ok, stats = manager.prune_repository(BorgRetention(daily=7), lock_timeout=300)
+
+    assert ok is True
+    assert stats is not None
+    assert stats.archives_deleted == 2

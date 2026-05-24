@@ -239,9 +239,9 @@ class BorgManager:
             logger.error("borg prune failed: %s", result.stderr)
             return False, None
 
-        pruning = parse_prune_deleted_count(combined)
+        archives_deleted = parse_prune_deleted_count(combined)
         stats = BorgPruneStats(
-            archives_deleted=len(pruning),
+            archives_deleted=archives_deleted,
             duration=duration,
         )
         logger.info(
