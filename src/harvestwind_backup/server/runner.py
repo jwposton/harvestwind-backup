@@ -39,6 +39,7 @@ class ServerRunner:
     staging_lock_wait_seconds: float = 0.0
 
     def __post_init__(self) -> None:
+        self.profile_label = self._resolve_profile_label()
         self.notifier = NtfyNotifier(
             self.config.ntfy, hostname=socket.gethostname()
         )
@@ -53,13 +54,29 @@ class ServerRunner:
             self.config.b2.path,
         )
 
+    def _resolve_profile_label(self) -> str:
+        if self.config.profile:
+            return self.config.profile
+        return Path(self.config.borg.backup_path).resolve().parent.name
+
+    def _notify_title(self, title: str) -> str:
+        return f"[{self.profile_label}] {title}"
+
+    def _notify_body_prefix(self) -> str:
+        return (
+            f"**Profile:** `{self.profile_label}`\n"
+            f"**Staging:** `{self.config.borg.backup_path}`\n"
+            f"**B2:** `{self.config.b2.bucket}/{self.config.b2.path}`\n\n"
+        )
+
     def run(self) -> bool:
         self._started = time.monotonic()
         self.notifier.notify_if(
             "success",
-            "Server backup started",
-            f"Borg + cloud sync started on `{socket.gethostname()}`.",
-            tags=["backup", "server"],
+            self._notify_title("Server backup started"),
+            self._notify_body_prefix()
+            + f"Borg + cloud sync started on `{socket.gethostname()}`.",
+            tags=["backup", "server", self.profile_label],
         )
 
         had_errors = False
@@ -72,12 +89,13 @@ class ServerRunner:
             had_errors = True
             self.notifier.notify_if(
                 "failure",
-                "Server backup aborted (client still syncing)",
-                (
+                self._notify_title("Server backup aborted (client still syncing)"),
+                self._notify_body_prefix()
+                + (
                     f"Timed out after {format_duration(self.config.staging_lock_wait_timeout)} "
                     f"waiting for `{staging_lock_path(self.config.borg.backup_path)}`."
                 ),
-                tags=["backup", "server"],
+                tags=["backup", "server", self.profile_label],
             )
             return False
 
@@ -90,9 +108,10 @@ class ServerRunner:
             had_errors = True
             self.notifier.notify_if(
                 "failure",
-                "Borg backup failed",
-                "borg create returned an error. Check server logs.",
-                tags=["backup", "server"],
+                self._notify_title("Borg backup failed"),
+                self._notify_body_prefix()
+                + "borg create returned an error. Check server logs.",
+                tags=["backup", "server", self.profile_label],
             )
         else:
             if self.config.borg.retention is not None:
@@ -108,9 +127,10 @@ class ServerRunner:
                     had_errors = True
                     self.notifier.notify_if(
                         "failure",
-                        "Borg prune failed",
-                        "borg prune returned an error. Check server logs.",
-                        tags=["backup", "server"],
+                        self._notify_title("Borg prune failed"),
+                        self._notify_body_prefix()
+                        + "borg prune returned an error. Check server logs.",
+                        tags=["backup", "server", self.profile_label],
                     )
 
             self.borg_verify_ok, self.borg_verify_seconds = self.borg.verify_repository(
@@ -122,9 +142,10 @@ class ServerRunner:
                 had_errors = True
                 self.notifier.notify_if(
                     "failure",
-                    "Borg verification failed",
-                    "borg check returned an error. Check server logs.",
-                    tags=["backup", "server"],
+                    self._notify_title("Borg verification failed"),
+                    self._notify_body_prefix()
+                    + "borg check returned an error. Check server logs.",
+                    tags=["backup", "server", self.profile_label],
                 )
 
             try:
@@ -140,9 +161,10 @@ class ServerRunner:
                 had_errors = True
                 self.notifier.notify_if(
                     "failure",
-                    "Cloud sync failed",
-                    "rclone sync returned an error. Check server logs.",
-                    tags=["backup", "server"],
+                    self._notify_title("Cloud sync failed"),
+                    self._notify_body_prefix()
+                    + "rclone sync returned an error. Check server logs.",
+                    tags=["backup", "server", self.profile_label],
                 )
             else:
                 verify_ok, verify_stats = self.cloud.verify(self.config.borg.repo_path)
@@ -152,9 +174,10 @@ class ServerRunner:
                     had_errors = True
                     self.notifier.notify_if(
                         "failure",
-                        "Cloud sync verification failed",
-                        "rclone check returned an error. Check server logs.",
-                        tags=["backup", "server"],
+                        self._notify_title("Cloud sync verification failed"),
+                        self._notify_body_prefix()
+                        + "rclone check returned an error. Check server logs.",
+                        tags=["backup", "server", self.profile_label],
                     )
             self.cloud_ok = cloud_ok
         else:
@@ -167,9 +190,11 @@ class ServerRunner:
         kind = "failure" if had_errors else "success"
         self.notifier.notify_if(
             kind,
-            "Server backup complete" if not had_errors else "Server backup had errors",
-            self._summary(wall, archive),
-            tags=["backup", "server", kind],
+            self._notify_title(
+                "Server backup complete" if not had_errors else "Server backup had errors"
+            ),
+            self._notify_body_prefix() + self._summary(wall, archive),
+            tags=["backup", "server", kind, self.profile_label],
         )
         return not had_errors
 

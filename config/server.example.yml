@@ -1,4 +1,7 @@
 backup:
+  # Inventory profile name (e.g. nixihost, oxford-mini) — shown in ntfy title/body
+  profile: your-profile-name
+
   server:
     lock_timeout: 300
     staging_lock_wait_timeout: 10800

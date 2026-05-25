@@ -82,6 +82,7 @@ class ServerConfig:
     borg: BorgConfig
     b2: B2Config
     ntfy: NtfyConfig
+    profile: str | None = None
     lock_timeout: int = 300
     staging_lock_wait_timeout: int = 10800
     staging_lock_poll_interval: int = 30
@@ -113,6 +114,7 @@ class ServerConfig:
             ),
             b2=B2Config(**backup["b2"]),
             ntfy=NtfyConfig.from_dict(backup.get("ntfy")),
+            profile=backup.get("profile"),
             lock_timeout=int(server.get("lock_timeout", 300)),
             staging_lock_wait_timeout=int(server.get("staging_lock_wait_timeout", 10800)),
             staging_lock_poll_interval=int(server.get("staging_lock_poll_interval", 30)),
