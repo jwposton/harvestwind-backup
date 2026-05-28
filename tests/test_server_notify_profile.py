@@ -27,9 +27,7 @@ def test_profile_label_from_config(_borg_cls: MagicMock, _cloud_cls: MagicMock) 
         )
     )
     assert runner.profile_label == "oxford-mini"
-    assert runner._notify_title("Server backup complete") == (
-        "[oxford-mini] Server backup complete"
-    )
+    assert runner._notify_title("Server backup complete") == "Server backup complete (oxford-mini)"
     assert "**Profile:** `oxford-mini`" in runner._notify_body_prefix()
     assert "**Staging:** `/srv/backups/oxford-mini/rsync`" in runner._notify_body_prefix()
 
@@ -95,6 +93,6 @@ def test_final_notify_includes_profile_in_title(
     runner.run()
 
     final_call = notifier.notify_if.call_args_list[-1]
-    assert final_call[0][1] == "[nixihost] Server backup complete"
+    assert final_call[0][1] == "Server backup complete (nixihost)"
     assert "**Profile:** `nixihost`" in final_call[0][2]
     assert "nixihost" in final_call[1]["tags"]

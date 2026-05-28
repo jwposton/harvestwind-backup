@@ -51,3 +51,13 @@ def test_parse_repo_info_json_archives_count_dict() -> None:
     info = parse_repo_info_json(data)
     assert info["total_archives"] == 17
     assert info["total_size"] == 900
+
+
+def test_parse_repo_info_json_borg2_style_fields() -> None:
+    data = {
+        "repository": {"archive_count": 9},
+        "cache": {"stats": {"unique_size": 123456789}},
+    }
+    info = parse_repo_info_json(data)
+    assert info["total_archives"] == 9
+    assert info["total_size"] == 123456789

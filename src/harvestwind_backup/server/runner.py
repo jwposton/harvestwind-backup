@@ -60,7 +60,7 @@ class ServerRunner:
         return Path(self.config.borg.backup_path).resolve().parent.name
 
     def _notify_title(self, title: str) -> str:
-        return f"[{self.profile_label}] {title}"
+        return f"{title} ({self.profile_label})"
 
     def _notify_body_prefix(self) -> str:
         return (

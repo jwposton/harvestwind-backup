@@ -98,20 +98,29 @@ def parse_create_stats(output: str, archive_name: str, duration: float) -> BorgA
 
 def parse_repo_info_json(data: dict) -> dict[str, int]:
     """Parse ``borg info --json`` for archive count and unique repo size."""
+    total_archives = 0
     archives = data.get("archives")
     if isinstance(archives, list):
         total_archives = len(archives)
     elif isinstance(archives, dict):
-        total_archives = int(archives.get("count", 0))
-    else:
-        total_archives = 0
+        total_archives = int(archives.get("count", 0) or 0)
+    if total_archives == 0:
+        repository = data.get("repository") or {}
+        for key in ("archive_count", "archives_count", "count"):
+            value = repository.get(key)
+            if value is not None:
+                total_archives = int(value)
+                break
 
     cache = data.get("cache") or {}
     stats = cache.get("stats") or {}
-    unique = stats.get("unique") or {}
-    total_size = unique.get("total_size")
-    if total_size is None:
-        total_size = stats.get("total_size", 0)
+    total_size = (
+        stats.get("unique_size")
+        or stats.get("total_unique_size")
+        or (stats.get("unique") or {}).get("total_size")
+        or stats.get("total_size")
+        or 0
+    )
 
     return {
         "total_archives": total_archives,
@@ -258,4 +267,9 @@ class BorgManager:
             text=True,
             check=True,
         )
-        return parse_repo_info_json(json.loads(result.stdout))
+        info = parse_repo_info_json(json.loads(result.stdout))
+        if info["total_archives"] == 0:
+            archives = self.list_archives()
+            if archives:
+                info["total_archives"] = len(archives)
+        return info
