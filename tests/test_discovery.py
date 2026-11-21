@@ -40,7 +40,11 @@ def test_volume_tmpfs_and_bind_excluded(tmp_path: Path) -> None:
         )
     )
     discovery = VolumeDiscovery()
-    with patch.object(discovery, "_volume_exists", return_value=True):
+
+    def exists(name: str) -> bool:
+        return name == "data"
+
+    with patch.object(discovery, "_volume_exists", side_effect=exists):
         assert discovery.get_volumes(compose_file) == ["data"]
 
 
@@ -56,6 +60,20 @@ def test_volume_uses_compose_project_prefix(tmp_path: Path) -> None:
 
     with patch.object(discovery, "_volume_exists", side_effect=exists):
         assert discovery.get_volumes(compose_file) == ["clutch-alerts_postgres_data"]
+
+
+def test_volume_prefers_project_prefix_over_leftover_key(tmp_path: Path) -> None:
+    app = tmp_path / "mealie"
+    app.mkdir()
+    compose_file = app / "docker-compose.yml"
+    compose_file.write_text(yaml.dump({"volumes": {"mealie-pgdata": None}}))
+    discovery = VolumeDiscovery()
+
+    def exists(name: str) -> bool:
+        return name in {"mealie-pgdata", "mealie_mealie-pgdata"}
+
+    with patch.object(discovery, "_volume_exists", side_effect=exists):
+        assert discovery.get_volumes(compose_file) == ["mealie_mealie-pgdata"]
 
 
 def test_volume_prefers_explicit_name(tmp_path: Path) -> None:

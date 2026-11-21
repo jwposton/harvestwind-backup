@@ -95,17 +95,18 @@ class VolumeDiscovery:
     ) -> str | None:
         """Compose keys are not always the Docker volume name.
 
-        Prefer an explicit ``name:``, then the key itself, then ``<project>_<key>``.
+        Prefer an explicit ``name:``, then ``<project>_<key>`` (what Compose
+        creates), then a leftover volume that uses only the key.
         """
         if isinstance(config, dict):
             explicit = config.get("name")
             if isinstance(explicit, str) and explicit and self._volume_exists(explicit):
                 return explicit
-        if self._volume_exists(key):
-            return key
         prefixed = f"{project}_{key}"
         if prefixed != key and self._volume_exists(prefixed):
             return prefixed
+        if self._volume_exists(key):
+            return key
         return None
 
     def _stack_volumes_excluded(self, compose_data: dict) -> bool:

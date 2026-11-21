@@ -138,7 +138,7 @@ Skip the **entire stack** (no volume tars, no rsync) with `unifybackup.app.exclu
 - compose `x-labels` / `labels`, or
 - any `services.<name>.labels` (one labeled service excludes the whole app folder).
 
-Bind mounts declared under `services` (e.g. `./data:/path`) are backed up via **rsync** of the app directory, not volume tar. Top-level `volumes:` entries with `driver: tmpfs`, `type: bind`, or path-like names (`./foo`) are not tarred.
+Bind mounts declared under `services` (e.g. `./data:/path`) are backed up via **rsync** of the app directory, not volume tar. Top-level `volumes:` entries with `driver: tmpfs`, `type: bind`, or path-like names (`./foo`) are not tarred. A named volume is recorded under the Docker name Compose uses: an explicit `name:`, otherwise `<project>_<key>` when that volume exists. A leftover volume that uses only the key is used when the project-prefixed volume does not.
 
 ## Borg retention
 
