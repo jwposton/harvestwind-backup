@@ -44,6 +44,34 @@ def test_volume_tmpfs_and_bind_excluded(tmp_path: Path) -> None:
         assert discovery.get_volumes(compose_file) == ["data"]
 
 
+def test_volume_uses_compose_project_prefix(tmp_path: Path) -> None:
+    app = tmp_path / "clutch-alerts"
+    app.mkdir()
+    compose_file = app / "docker-compose.yml"
+    compose_file.write_text(yaml.dump({"volumes": {"postgres_data": None}}))
+    discovery = VolumeDiscovery()
+
+    def exists(name: str) -> bool:
+        return name == "clutch-alerts_postgres_data"
+
+    with patch.object(discovery, "_volume_exists", side_effect=exists):
+        assert discovery.get_volumes(compose_file) == ["clutch-alerts_postgres_data"]
+
+
+def test_volume_prefers_explicit_name(tmp_path: Path) -> None:
+    compose_file = tmp_path / "docker-compose.yml"
+    compose_file.write_text(
+        yaml.dump({"name": "immich", "volumes": {"data": {"name": "immich_data"}}})
+    )
+    discovery = VolumeDiscovery()
+
+    def exists(name: str) -> bool:
+        return name == "immich_data"
+
+    with patch.object(discovery, "_volume_exists", side_effect=exists):
+        assert discovery.get_volumes(compose_file) == ["immich_data"]
+
+
 def test_app_backup_excluded_stack_x_labels() -> None:
     data = {"x-labels": {"unifybackup.app.exclude": "true"}, "services": {}}
     assert app_backup_excluded(data) is True

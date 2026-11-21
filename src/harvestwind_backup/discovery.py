@@ -65,6 +65,7 @@ class VolumeDiscovery:
         if self._stack_volumes_excluded(compose_data):
             return []
 
+        project = self._project_name(compose_data, compose_file)
         names: list[str] = []
         for volume_name, volume_config in compose_data["volumes"].items():
             if not self._is_named_volume(volume_name, volume_config):
@@ -72,10 +73,40 @@ class VolumeDiscovery:
                 continue
             if self._volume_excluded(volume_config):
                 continue
-            if not self._volume_exists(volume_name):
+            resolved = self._resolve_volume_name(volume_name, volume_config, project)
+            if resolved is None:
+                logger.warning(
+                    "Named volume %s not found for project %s",
+                    volume_name,
+                    project,
+                )
                 continue
-            names.append(volume_name)
+            names.append(resolved)
         return names
+
+    def _project_name(self, compose_data: dict, compose_file: Path) -> str:
+        name = compose_data.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+        return compose_file.parent.name
+
+    def _resolve_volume_name(
+        self, key: str, config: dict | str | None, project: str
+    ) -> str | None:
+        """Compose keys are not always the Docker volume name.
+
+        Prefer an explicit ``name:``, then the key itself, then ``<project>_<key>``.
+        """
+        if isinstance(config, dict):
+            explicit = config.get("name")
+            if isinstance(explicit, str) and explicit and self._volume_exists(explicit):
+                return explicit
+        if self._volume_exists(key):
+            return key
+        prefixed = f"{project}_{key}"
+        if prefixed != key and self._volume_exists(prefixed):
+            return prefixed
+        return None
 
     def _stack_volumes_excluded(self, compose_data: dict) -> bool:
         for key in ("x-labels", "labels"):

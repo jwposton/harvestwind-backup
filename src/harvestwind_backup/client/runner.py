@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..compose import build_compose_command, missing_compose_files
 from ..config import ClientConfig
 from ..discovery import VolumeDiscovery, discover_apps
 from ..metrics import TransferTotals, format_bytes, format_duration, format_throughput
@@ -107,15 +108,32 @@ class ClientRunner:
         )
         return not had_errors
 
+    def _compose_spec(self, app_name: str):
+        return self.config.compose.get(app_name)
+
+    def _compose(self, app, *args: str) -> list[str]:
+        return build_compose_command(app.path, self._compose_spec(app.name), *args)
+
     def _backup_app(self, app) -> bool:
         compose = app.compose_file
-        was_running = self._stack_running(compose)
+        spec = self._compose_spec(app.name)
+        missing = missing_compose_files(app.path, spec)
+        if missing:
+            logger.error(
+                "Missing compose file(s) for %s: %s",
+                app.name,
+                ", ".join(missing),
+            )
+            self.stats.apps_failed += 1
+            return False
+
+        was_running = self._stack_running(app)
         ok = True
 
         try:
             if was_running:
                 subprocess.run(
-                    ["docker", "compose", "-f", str(compose), "down"],
+                    self._compose(app, "down"),
                     check=False,
                     capture_output=True,
                 )
@@ -163,7 +181,7 @@ class ClientRunner:
 
             if was_running:
                 subprocess.run(
-                    ["docker", "compose", "-f", str(compose), "up", "-d"],
+                    self._compose(app, "up", "-d"),
                     check=True,
                 )
 
@@ -172,7 +190,7 @@ class ClientRunner:
             ok = False
             if was_running:
                 subprocess.run(
-                    ["docker", "compose", "-f", str(compose), "up", "-d"],
+                    self._compose(app, "up", "-d"),
                     check=False,
                 )
 
@@ -182,9 +200,9 @@ class ClientRunner:
             self.stats.apps_failed += 1
         return ok
 
-    def _stack_running(self, compose_file: Path) -> bool:
+    def _stack_running(self, app) -> bool:
         result = subprocess.run(
-            ["docker", "compose", "-f", str(compose_file), "ps", "-q"],
+            self._compose(app, "ps", "-q"),
             capture_output=True,
             text=True,
         )

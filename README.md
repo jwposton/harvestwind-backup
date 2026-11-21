@@ -69,6 +69,7 @@ Systemd runs as a non-root user with `SupplementaryGroups=docker` on clients.
 | Key | Purpose |
 |-----|---------|
 | `apps_root` | Parent of compose app dirs (e.g. `/home/jwp/docker-services`) |
+| `compose.<app>` | Extra compose files and profiles for `down` / `up` (default: `docker-compose.yml` only) |
 | `rsync.staging_lock.enabled` | SSH lock on NAS during rsync (default true when SSH dest configured) |
 | `rsync.verify` | Post-sync dry-run: `enabled`, `skip_if_unchanged`, optional `checksum` |
 | `rsync.server_destination` | SSH rsync target (`remote_path`, `auth.key_path`, `options`) |

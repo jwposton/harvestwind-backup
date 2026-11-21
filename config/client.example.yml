@@ -1,6 +1,15 @@
 backup:
   apps_root: /home/jwp/docker-services
 
+  # Optional. Apps omitted here use docker-compose.yml and no profiles.
+  # compose:
+  #   clutch-alerts:
+  #     files:
+  #       - docker-compose.yml
+  #       - docker-compose.override.yml
+  #     profiles:
+  #       - discuss
+
   volumes:
     max_backups: 5
     backup_dir: vol_bkup

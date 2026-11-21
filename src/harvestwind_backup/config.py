@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from .compose import ComposeAppConfig
 from .notify.ntfy import NtfyConfig
 
 
@@ -25,17 +26,26 @@ class ClientConfig:
     volumes: VolumeConfig
     rsync: dict[str, Any]
     ntfy: NtfyConfig
+    # App directory name → compose files and profiles. Missing key = docker-compose.yml only.
+    compose: dict[str, ComposeAppConfig] = field(default_factory=dict)
 
     @classmethod
     def from_yaml(cls, path: Path) -> "ClientConfig":
         with path.open() as fh:
             data = yaml.safe_load(fh)
         backup = data["backup"]
+        compose_raw = backup.get("compose") or {}
+        compose = {
+            str(name): ComposeAppConfig.from_dict(spec)
+            for name, spec in compose_raw.items()
+            if isinstance(spec, dict)
+        }
         return cls(
             apps_root=backup["apps_root"],
             volumes=VolumeConfig(**backup.get("volumes", {})),
             rsync=backup.get("rsync", {}),
             ntfy=NtfyConfig.from_dict(backup.get("ntfy")),
+            compose=compose,
         )
 
 
